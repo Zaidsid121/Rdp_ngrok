@@ -1,0 +1,47 @@
+name: Windows RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 1. Set up the environment
+        run: |
+          echo "RDP_USER=Administrator" >> $env:GITHUB_ENV
+          $RDP_PASS = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object {[char]$_})
+          echo "RDP_PASS=$RDP_PASS" >> $env:GITHUB_ENV
+          echo "Setting user password..."
+          net user $env:RDP_USER $env:RDP_PASS
+
+      - name: 2. Enable RDP Access
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: 3. Download and set up Ngrok
+        run: |
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive ngrok.zip
+          ./ngrok.exe config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+
+      - name: 4. Create Tunnel and Display Info
+        run: |
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -NoNewWindow
+          sleep 10
+          echo "✅ RDP Details are below:"
+          echo "------------------------------------"
+          (Get-Content ngrok.log | Select-String "url=tcp://(.+ )" | ForEach-Object { $_.Matches[0].Groups[1].Value }) -match "(.+):(\d+)" | Out-Null
+          echo "IP Address : ${{ $matches[1] }}"
+          echo "Port       : ${{ $matches[2] }}"
+          echo "Username   : ${{ env.RDP_USER }}"
+          echo "Password   : ${{ env.RDP_PASS }}"
+          echo "------------------------------------"
+          echo "💻 To connect, use: ${{ $matches[1] }}:${{ $matches[2] }}"
+
+      - name: 5. Keep RDP Alive
+        run: |
+          timeout /t 21000 /nobreak
+          
