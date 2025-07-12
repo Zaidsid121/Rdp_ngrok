@@ -1,0 +1,50 @@
+name: Windows RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 1. Create New User and Set Password
+        run: |
+          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object {[char]$_})
+          echo "RDP_USER=rdpuser" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "RDP_PASS=$password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          net user rdpuser $password /add
+          net localgroup administrators rdpuser /add
+
+      - name: 2. Enable RDP Access
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: 3. Download and configure Ngrok
+        run: |
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive ngrok.zip
+          ./ngrok.exe config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
+
+      - name: 4. Create Tunnel and Display Info
+        run: |
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -NoNewWindow
+          Start-Sleep -Seconds 10
+          $ngrokLog = Get-Content -Path 'ngrok.log' -ErrorAction SilentlyContinue
+          $tunnelInfo = $ngrokLog | Select-String "url=tcp://(.+ )" | ForEach-Object { $_.Matches[0].Groups[1].Value }
+          $ip = ($tunnelInfo -split ':')[0]
+          $port = ($tunnelInfo -split ':')[1]
+          
+          echo "✅ RDP Details are below:"
+          echo "------------------------------------"
+          echo "IP Address : $ip"
+          echo "Port       : $port"
+          echo "Username   : ${{ env.RDP_USER }}"
+          echo "Password   : ${{ env.RDP_PASS }}"
+          echo "------------------------------------"
+          echo "💻 To connect, use: $ip`:$port"
+
+      - name: 5. Keep RDP Alive
+        run: timeout /t 21000 /nobreak
+        
